@@ -1,0 +1,401 @@
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        <link rel="icon" href="/favicon.ico" />
+        <meta name="viewport" content="width=device-width" />
+        <link rel="stylesheet" href="/styles/global.css" />
+        <meta name="generator" content="{Astro.generator}" />
+        <title>Design Craft Academy</title>
+    </head>
+    <body>
+        <h2 class="sr-only">
+            Тестер распознавания речи — запись через микрофон и отправка на
+            whisper-service
+        </h2>
+        <div style="max-width: 580px; margin: 1.5rem auto; padding: 0 1rem">
+            <div
+                style="
+                    display: flex;
+                    gap: 10px;
+                    margin-bottom: 1rem;
+                    align-items: center;
+                "
+            >
+                <input
+                    id="url-input"
+                    type="text"
+                    value="http://localhost:3000"
+                    placeholder="URL сервиса"
+                    style="flex: 1; font-size: 13px"
+                />
+                <span
+                    id="status-dot"
+                    style="
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 50%;
+                        background: var(--color-border-secondary);
+                        flex-shrink: 0;
+                    "
+                ></span>
+                <button
+                    id="check-btn"
+                    style="font-size: 13px; padding: 0 14px"
+                    onclick="checkHealth()"
+                >
+                    Проверить
+                </button>
+            </div>
+
+            <div
+                style="
+                    background: var(--color-background-secondary);
+                    border-radius: var(--border-radius-lg);
+                    padding: 2rem;
+                    text-align: center;
+                    margin-bottom: 1rem;
+                "
+            >
+                <div
+                    id="visualizer-wrap"
+                    style="
+                        height: 48px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 3px;
+                        margin-bottom: 1.5rem;
+                    "
+                >
+                    <span
+                        id="idle-icon"
+                        style="
+                            color: var(--color-text-secondary);
+                            font-size: 14px;
+                        "
+                        >Нажми кнопку и говори</span
+                    >
+                    <canvas
+                        id="viz"
+                        width="300"
+                        height="48"
+                        style="display: none"
+                    ></canvas>
+                </div>
+
+                <button
+                    id="rec-btn"
+                    onclick="toggleRecording()"
+                    style="
+                        width: 64px;
+                        height: 64px;
+                        border-radius: 50%;
+                        font-size: 24px;
+                        padding: 0;
+                        border: 2px solid var(--color-border-secondary);
+                    "
+                >
+                    <i class="ti ti-microphone" aria-hidden="true"></i>
+                </button>
+                <p
+                    id="rec-label"
+                    style="
+                        font-size: 13px;
+                        color: var(--color-text-secondary);
+                        margin: 10px 0 0;
+                    "
+                >
+                    Не записываю
+                </p>
+            </div>
+
+            <div
+                id="result-box"
+                style="
+                    display: none;
+                    background: var(--color-background-primary);
+                    border: 0.5px solid var(--color-border-tertiary);
+                    border-radius: var(--border-radius-lg);
+                    padding: 1rem 1.25rem;
+                    margin-bottom: 1rem;
+                "
+            >
+                <p
+                    style="
+                        font-size: 12px;
+                        color: var(--color-text-secondary);
+                        margin: 0 0 6px;
+                    "
+                >
+                    Результат
+                </p>
+                <p
+                    id="result-text"
+                    style="font-size: 16px; margin: 0; line-height: 1.6"
+                ></p>
+                <p
+                    id="result-meta"
+                    style="
+                        font-size: 12px;
+                        color: var(--color-text-secondary);
+                        margin: 8px 0 0;
+                    "
+                ></p>
+            </div>
+
+            <div
+                id="error-box"
+                style="
+                    display: none;
+                    background: var(--color-background-danger);
+                    border: 0.5px solid var(--color-border-danger);
+                    border-radius: var(--border-radius-md);
+                    padding: 0.75rem 1rem;
+                    margin-bottom: 1rem;
+                "
+            >
+                <p
+                    id="error-text"
+                    style="
+                        font-size: 13px;
+                        color: var(--color-text-danger);
+                        margin: 0;
+                    "
+                ></p>
+            </div>
+
+            <div style="margin-top: 0.5rem">
+                <p
+                    style="
+                        font-size: 12px;
+                        color: var(--color-text-secondary);
+                        margin: 0 0 6px;
+                    "
+                >
+                    Или загрузи файл
+                </p>
+                <input
+                    id="file-input"
+                    type="file"
+                    accept=".wav,audio/*"
+                    onchange="uploadFile(this)"
+                    style="font-size: 13px"
+                />
+            </div>
+
+            <div
+                id="log"
+                style="
+                    margin-top: 1rem;
+                    font-size: 12px;
+                    color: var(--color-text-secondary);
+                    font-family: var(--font-mono);
+                "
+            ></div>
+        </div>
+
+        <script>
+            let mediaRecorder = null;
+            let chunks = [];
+            let audioCtx = null;
+            let analyser = null;
+            let animFrame = null;
+            let stream = null;
+            let isRecording = false;
+
+            function log(msg) {
+                const el = document.getElementById("log");
+                el.textContent = msg;
+            }
+
+            function getUrl() {
+                return document
+                    .getElementById("url-input")
+                    .value.replace(/\/$/, "");
+            }
+
+            async function checkHealth() {
+                const dot = document.getElementById("status-dot");
+                dot.style.background = "#aaa";
+                try {
+                    const r = await fetch(getUrl() + "/health");
+                    if (r.ok) {
+                        dot.style.background = "#22c55e";
+                        log("Сервис доступен");
+                    } else {
+                        dot.style.background = "#ef4444";
+                        log("Сервис вернул " + r.status);
+                    }
+                } catch (e) {
+                    dot.style.background = "#ef4444";
+                    log("Не удалось подключиться: " + e.message);
+                }
+            }
+
+            async function toggleRecording() {
+                if (isRecording) {
+                    stopRecording();
+                } else {
+                    await startRecording();
+                }
+            }
+
+            async function startRecording() {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        audio: true,
+                    });
+                } catch (e) {
+                    showError("Нет доступа к микрофону: " + e.message);
+                    return;
+                }
+
+                audioCtx = new AudioContext();
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 64;
+                const src = audioCtx.createMediaStreamSource(stream);
+                src.connect(analyser);
+
+                const mimeType = MediaRecorder.isTypeSupported(
+                    "audio/webm;codecs=opus",
+                )
+                    ? "audio/webm;codecs=opus"
+                    : "audio/webm";
+
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType,
+                });
+                chunks = [];
+                mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+                mediaRecorder.onstop = processAudio;
+                mediaRecorder.start();
+                isRecording = true;
+
+                document.getElementById("rec-btn").style.background =
+                    "var(--color-background-danger)";
+                document.getElementById("rec-btn").innerHTML =
+                    '<i class="ti ti-square" aria-hidden="true"></i>';
+                document.getElementById("rec-label").textContent = "Запись...";
+                document.getElementById("idle-icon").style.display = "none";
+                document.getElementById("viz").style.display = "block";
+                drawViz();
+            }
+
+            function stopRecording() {
+                if (mediaRecorder && mediaRecorder.state !== "inactive")
+                    mediaRecorder.stop();
+                if (stream) stream.getTracks().forEach((t) => t.stop());
+                cancelAnimationFrame(animFrame);
+                isRecording = false;
+
+                document.getElementById("rec-btn").style.background = "";
+                document.getElementById("rec-btn").innerHTML =
+                    '<i class="ti ti-microphone" aria-hidden="true"></i>';
+                document.getElementById("rec-label").textContent =
+                    "Обрабатываю...";
+                document.getElementById("viz").style.display = "none";
+                document.getElementById("idle-icon").style.display = "";
+                document.getElementById("idle-icon").textContent =
+                    "Отправляю на сервер...";
+            }
+
+            function drawViz() {
+                const canvas = document.getElementById("viz");
+                const ctx = canvas.getContext("2d");
+                const buf = new Uint8Array(analyser.frequencyBinCount);
+                function draw() {
+                    animFrame = requestAnimationFrame(draw);
+                    analyser.getByteFrequencyData(buf);
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const barW = 8,
+                        gap = 3;
+                    const count = Math.floor(canvas.width / (barW + gap));
+                    for (let i = 0; i < count; i++) {
+                        const v = (buf[i] || 0) / 255;
+                        const h = Math.max(4, v * canvas.height);
+                        ctx.fillStyle = "var(--color-text-secondary)";
+                        ctx.beginPath();
+                        ctx.roundRect(
+                            i * (barW + gap),
+                            (canvas.height - h) / 2,
+                            barW,
+                            h,
+                            3,
+                        );
+                        ctx.fill();
+                    }
+                }
+                draw();
+            }
+            async function processAudio() {
+                const blob = new Blob(chunks, {
+                    type: mediaRecorder.mimeType,
+                });
+
+                await sendBlob(blob, "recording.webm");
+            }
+
+            async function uploadFile(input) {
+                const file = input.files[0];
+                if (!file) return;
+                hideError();
+                log("Загружаю файл: " + file.name);
+                await sendBlob(file, file.name);
+            }
+
+            async function sendBlob(blob, filename) {
+                hideError();
+                document.getElementById("result-box").style.display = "none";
+                log("Отправляю " + (blob.size / 1024).toFixed(1) + " KB...");
+
+                const fd = new FormData();
+                fd.append("file", blob, filename);
+
+                try {
+                    const r = await fetch(getUrl() + "/transcribe", {
+                        method: "POST",
+                        body: fd,
+                    });
+                    if (!r.ok) {
+                        const t = await r.text();
+                        showError("Сервер вернул " + r.status + ": " + t);
+                        return;
+                    }
+                    const data = await r.json();
+                    showResult(data);
+                } catch (e) {
+                    showError(
+                        "Ошибка запроса: " +
+                            e.message +
+                            ". Проверь URL и что сервис запущен.",
+                    );
+                } finally {
+                    document.getElementById("rec-label").textContent =
+                        "Не записываю";
+                    document.getElementById("idle-icon").textContent =
+                        "Нажми кнопку и говори";
+                }
+            }
+
+            function showResult(data) {
+                document.getElementById("result-text").textContent =
+                    data.text || "(пусто)";
+                document.getElementById("result-meta").textContent =
+                    `Язык: ${data.language} · ${data.duration_ms} мс`;
+                document.getElementById("result-box").style.display = "block";
+                log("");
+            }
+
+            function showError(msg) {
+                document.getElementById("error-text").textContent = msg;
+                document.getElementById("error-box").style.display = "block";
+                log("");
+            }
+
+            function hideError() {
+                document.getElementById("error-box").style.display = "none";
+            }
+        </script>
+    </body>
+</html>
